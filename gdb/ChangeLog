@@ -1,5 +1,10 @@
 2018-10-03  John Baldwin  <jhb@FreeBSD.org>
 
+	* fbsd-tdep.c (fbsd_print_auxv_entry): Only use
+	default_print_auxv_entry for specific tag values.
+
+2018-10-03  John Baldwin  <jhb@FreeBSD.org>
+
 	* fbsd-tdep.c (fbsd_print_auxv_entry): Handle AT_FREEBSD_HWCAP2.
 
 2018-09-28  John Baldwin  <jhb@FreeBSD.org>
