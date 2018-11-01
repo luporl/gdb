@@ -1,3 +1,11 @@
+2019-01-19  John Baldwin  <jhb@FreeBSD.org>
+
+	* linux-x86-tdesc.c (i386_linux_read_description): Update call to
+	i386_create_target_description for 'segments' parameter.
+	* lynx-i386-low.c (lynx_i386_arch_setup): Likewise.
+	* nto-x86-low.c (nto_x86_arch_setup): Likewise.
+	* win32-i386-low.c (i386_arch_setup): Likewise.
+
 2019-01-01  Joel Brobecker  <brobecker@adacore.com>
 
 	* gdbreplay.c (gdbreplay_version): Update copyright year in
