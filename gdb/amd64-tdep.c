@@ -3106,6 +3106,7 @@ amd64_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch,
       struct tdesc_arch_data *tdesc_data_segments =
 	  (struct tdesc_arch_data *) info.tdep_info;
 
+      tdep->fsbase_regnum = AMD64_FSBASE_REGNUM;
       tdesc_numbered_register (feature, tdesc_data_segments,
 		       AMD64_FSBASE_REGNUM, "fs_base");
       tdesc_numbered_register (feature, tdesc_data_segments,
