@@ -1,5 +1,10 @@
 2018-11-05  John Baldwin  <jhb@FreeBSD.org>
 
+	* syscalls/update-freebsd.sh: New file.
+	* syscalls/freebsd.xml: Regenerate.
+
+2018-11-05  John Baldwin  <jhb@FreeBSD.org>
+
 	* break-catch-syscall.c (catch_syscall_split_args): Update for
 	get_syscalls_by_name returning a vector.
 	* gdbarch.sh (UNKNOWN_SYSCALL): Remove.
