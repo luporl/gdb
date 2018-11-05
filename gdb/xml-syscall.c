@@ -77,11 +77,11 @@ get_syscall_names (struct gdbarch *gdbarch)
   return NULL;
 }
 
-struct syscall *
+std::vector<int>
 get_syscalls_by_group (struct gdbarch *gdbarch, const char *group)
 {
   syscall_warn_user ();
-  return NULL;
+  return std::vector<int> ();
 }
 
 const char **
@@ -444,38 +444,22 @@ xml_list_of_syscalls (struct gdbarch *gdbarch)
 }
 
 /* Iterate over the syscall_group_desc element to return a list of
-   syscalls that are part of the given group, terminated by an empty
-   element.  If the syscall group doesn't exist, return NULL.  */
+   syscalls that are part of the given group.  */
 
-static struct syscall *
+static std::vector<int>
 xml_list_syscalls_by_group (struct gdbarch *gdbarch, const char *group)
 {
   struct syscalls_info *syscalls_info = gdbarch_syscalls_info (gdbarch);
   struct syscall_group_desc *groupdesc;
-  struct syscall *syscalls = NULL;
-  int nsyscalls;
-  int i;
+  std::vector<int> syscalls;
 
   if (syscalls_info == NULL)
-    return NULL;
+    return syscalls;
 
   groupdesc = syscall_group_get_group_by_name (syscalls_info, group);
-  if (groupdesc == NULL)
-    return NULL;
-
-  nsyscalls = groupdesc->syscalls.size ();
-  syscalls = (struct syscall*) xmalloc ((nsyscalls + 1)
-					* sizeof (struct syscall));
-
-  for (i = 0; i < groupdesc->syscalls.size (); i++)
-    {
-      syscalls[i].name = groupdesc->syscalls[i]->name.c_str ();
-      syscalls[i].number = groupdesc->syscalls[i]->number;
-    }
-
-  /* Add final element marker.  */
-  syscalls[i].name = NULL;
-  syscalls[i].number = 0;
+  if (groupdesc != NULL)
+    for (const struct syscall_desc *sysdesc : groupdesc->syscalls)
+      syscalls.push_back (sysdesc->number);
 
   return syscalls;
 }
@@ -542,7 +526,7 @@ get_syscall_names (struct gdbarch *gdbarch)
 
 /* See comment in xml-syscall.h.  */
 
-struct syscall *
+std::vector<int>
 get_syscalls_by_group (struct gdbarch *gdbarch, const char *group)
 {
   init_syscalls_info (gdbarch);

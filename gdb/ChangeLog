@@ -1,3 +1,14 @@
+2018-11-05  John Baldwin  <jhb@FreeBSD.org>
+
+	* break-catch-syscall.c (catch_syscall_split_args): Update for
+	get_syscalls_by_group returning a vector.
+	* xml-syscall.c [!HAVE_LIBEXPATH] (get_syscalls_by_group): Return
+	empty vector.
+	[HAVE_LIBEXPAT] (xml_list_syscalls_by_group)
+	(get_syscalls_by_group): Return a vector of integers.
+	* xml-syscall.h (get_syscalls_by_group): Change return type to a
+	vector of integers.
+
 2018-11-04  Tom Tromey  <tom@tromey.com>
 
 	* varobj.c (install_default_visualizer): Update.

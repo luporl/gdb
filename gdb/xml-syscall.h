@@ -51,12 +51,10 @@ void get_syscall_by_name (struct gdbarch *gdbarch,
 const char **get_syscall_names (struct gdbarch *gdbarch);
 
 /* Function used to retrieve the list of syscalls of a given group in
-   the system.  Return a list of syscalls that are element of the
-   group, terminated by an empty element. The list is malloc'ed
-   and must be freed by the caller.  If group doesn't exist, return
-   NULL.  */
+   the system.  Return a vector of syscall numbers that are elements
+   of the group.  */
 
-struct syscall *get_syscalls_by_group (struct gdbarch *gdbarch,
+std::vector<int> get_syscalls_by_group (struct gdbarch *gdbarch,
 				       const char *group);
 
 /* Function used to retrieve the list of syscall groups in the system.
