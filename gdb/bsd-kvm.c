@@ -45,15 +45,6 @@
 
 #include "bsd-kvm.h"
 
-/* Kernel memory device file.  */
-static const char *bsd_kvm_corefile;
-
-/* Kernel memory interface descriptor.  */
-static kvm_t *core_kd;
-
-/* Address of process control block.  */
-static struct pcb *bsd_kvm_paddr;
-
 /* Pointer to architecture-specific function that reconstructs the
    register state from PCB and supplies it to REGCACHE.  */
 static int (*bsd_kvm_supply_pcb)(struct regcache *regcache, struct pcb *pcb);
@@ -75,7 +66,8 @@ Optionally specify the filename of a core dump.")
 class bsd_kvm_target final : public process_stratum_target
 {
 public:
-  bsd_kvm_target () = default;
+  bsd_kvm_target (const char *corefile, kvm_t *kd) :
+    corefile (corefile), kd (kd) {}
 
   const target_info &info () const override
   { return bsd_kvm_target_info; }
@@ -97,10 +89,19 @@ public:
   bool has_memory () override { return true; }
   bool has_stack () override { return true; }
   bool has_registers () override { return true; }
-};
 
-/* Target ops for libkvm interface.  */
-static bsd_kvm_target bsd_kvm_ops;
+  void set_pcb_addr (CORE_ADDR addr) { pcb_addr = addr; }
+
+private:
+  /* Kernel memory device file.  */
+  const char *corefile;
+
+  /* Kernel memory interface descriptor.  */
+  kvm_t *kd;
+
+  /* Address of process control block.  */
+  CORE_ADDR pcb_addr;
+};
 
 static void
 bsd_kvm_target_open (const char *arg, int from_tty)
@@ -131,12 +132,13 @@ bsd_kvm_target_open (const char *arg, int from_tty)
   if (temp_kd == NULL)
     error (("%s"), errbuf);
 
-  bsd_kvm_corefile = filename;
-  unpush_target (&bsd_kvm_ops);
-  core_kd = temp_kd;
-  push_target (&bsd_kvm_ops);
+  /* XXX: Need a way to close existing KVM target if it exists. */
 
-  add_thread_silent (bsd_kvm_ptid);
+  bsd_kvm_target *target = new bsd_kvm_target (filename, temp_kd);
+
+  push_target (target);
+
+  add_thread_silent (target, bsd_kvm_ptid);
   inferior_ptid = bsd_kvm_ptid;
 
   target_fetch_registers (get_current_regcache (), -1);
@@ -148,19 +150,20 @@ bsd_kvm_target_open (const char *arg, int from_tty)
 void
 bsd_kvm_target::close ()
 {
-  if (core_kd)
+  if (kd)
     {
-      if (kvm_close (core_kd) == -1)
-	warning (("%s"), kvm_geterr(core_kd));
-      core_kd = NULL;
+      inferior_ptid = null_ptid;
+      exit_inferior_silent (current_inferior ());
+
+      if (kvm_close (kd) == -1)
+	warning (("%s"), kvm_geterr(kd));
     }
 
-  inferior_ptid = null_ptid;
-  discard_all_inferiors ();
+  delete this;
 }
 
 static LONGEST
-bsd_kvm_xfer_memory (CORE_ADDR addr, ULONGEST len,
+bsd_kvm_xfer_memory (kvm_t *core_kd, CORE_ADDR addr, ULONGEST len,
 		     gdb_byte *readbuf, const gdb_byte *writebuf)
 {
   ssize_t nbytes = len;
@@ -182,7 +185,7 @@ bsd_kvm_target::xfer_partial (enum target_object object,
     {
     case TARGET_OBJECT_MEMORY:
       {
-	LONGEST ret = bsd_kvm_xfer_memory (offset, len, readbuf, writebuf);
+	LONGEST ret = bsd_kvm_xfer_memory (kd, offset, len, readbuf, writebuf);
 
 	if (ret < 0)
 	  return TARGET_XFER_E_IO;
@@ -203,9 +206,9 @@ bsd_kvm_target::xfer_partial (enum target_object object,
 void
 bsd_kvm_target::files_info ()
 {
-  if (bsd_kvm_corefile && strcmp (bsd_kvm_corefile, _PATH_MEM) != 0)
+  if (corefile && strcmp (corefile, _PATH_MEM) != 0)
     printf_filtered (_("\tUsing the kernel crash dump %s.\n"),
-		     bsd_kvm_corefile);
+		     corefile);
   else
     printf_filtered (_("\tUsing the currently running kernel.\n"));
 }
@@ -213,11 +216,11 @@ bsd_kvm_target::files_info ()
 /* Fetch process control block at address PADDR.  */
 
 static int
-bsd_kvm_fetch_pcb (struct regcache *regcache, struct pcb *paddr)
+bsd_kvm_fetch_pcb (kvm_t *core_kd, struct regcache *regcache, CORE_ADDR paddr)
 {
   struct pcb pcb;
 
-  if (kvm_read (core_kd, (unsigned long) paddr, &pcb, sizeof pcb) == -1)
+  if (kvm_read (core_kd, paddr, &pcb, sizeof pcb) == -1)
     error (("%s"), kvm_geterr (core_kd));
 
   gdb_assert (bsd_kvm_supply_pcb);
@@ -229,9 +232,9 @@ bsd_kvm_target::fetch_registers (struct regcache *regcache, int regnum)
 {
   struct nlist nl[2];
 
-  if (bsd_kvm_paddr)
+  if (pcb_addr != 0)
     {
-      bsd_kvm_fetch_pcb (regcache, bsd_kvm_paddr);
+      bsd_kvm_fetch_pcb (kd, regcache, pcb_addr);
       return;
     }
 
@@ -240,14 +243,14 @@ bsd_kvm_target::fetch_registers (struct regcache *regcache, int regnum)
   memset (nl, 0, sizeof nl);
   nl[0].n_name = "_dumppcb";
 
-  if (kvm_nlist (core_kd, nl) == -1)
-    error (("%s"), kvm_geterr (core_kd));
+  if (kvm_nlist (kd, nl) == -1)
+    error (("%s"), kvm_geterr (kd));
 
   if (nl[0].n_value != 0)
     {
       /* Found dumppcb.  If it contains a valid context, return
 	 immediately.  */
-      if (bsd_kvm_fetch_pcb (regcache, (struct pcb *) nl[0].n_value))
+      if (bsd_kvm_fetch_pcb (kd, regcache, nl[0].n_value))
 	return;
     }
 
@@ -258,18 +261,18 @@ bsd_kvm_target::fetch_registers (struct regcache *regcache, int regnum)
   memset (nl, 0, sizeof nl);
   nl[0].n_name = "_proc0paddr";
 
-  if (kvm_nlist (core_kd, nl) == -1)
-    error (("%s"), kvm_geterr (core_kd));
+  if (kvm_nlist (kd, nl) == -1)
+    error (("%s"), kvm_geterr (kd));
 
   if (nl[0].n_value != 0)
     {
-      struct pcb *paddr;
+      uintptr_t paddr;
 
       /* Found proc0paddr.  */
-      if (kvm_read (core_kd, nl[0].n_value, &paddr, sizeof paddr) == -1)
-	error (("%s"), kvm_geterr (core_kd));
+      if (kvm_read (kd, nl[0].n_value, &paddr, sizeof paddr) == -1)
+	error (("%s"), kvm_geterr (kd));
 
-      bsd_kvm_fetch_pcb (regcache, paddr);
+      bsd_kvm_fetch_pcb (kd, regcache, paddr);
       return;
     }
 
@@ -282,19 +285,19 @@ bsd_kvm_target::fetch_registers (struct regcache *regcache, int regnum)
   memset (nl, 0, sizeof nl);
   nl[0].n_name = "_thread0";
 
-  if (kvm_nlist (core_kd, nl) == -1)
-    error (("%s"), kvm_geterr (core_kd));
+  if (kvm_nlist (kd, nl) == -1)
+    error (("%s"), kvm_geterr (kd));
 
   if (nl[0].n_value != 0)
     {
-      struct pcb *paddr;
+      uintptr_t paddr;
 
       /* Found thread0.  */
       nl[0].n_value += offsetof (struct thread, td_pcb);
-      if (kvm_read (core_kd, nl[0].n_value, &paddr, sizeof paddr) == -1)
-	error (("%s"), kvm_geterr (core_kd));
+      if (kvm_read (kd, nl[0].n_value, &paddr, sizeof paddr) == -1)
+	error (("%s"), kvm_geterr (kd));
 
-      bsd_kvm_fetch_pcb (regcache, paddr);
+      bsd_kvm_fetch_pcb (kd, regcache, paddr);
       return;
     }
 #endif
@@ -313,6 +316,20 @@ bsd_kvm_cmd (const char *arg, int fromtty)
   /* ??? Should this become an alias for "target kvm"?  */
 }
 
+static bsd_kvm_target *
+current_bsd_kvm_target ()
+{
+  inferior *inferior = current_inferior ();
+  if (inferior == NULL)
+    return NULL;
+
+  struct process_stratum_target *target = inferior->process_target ();
+  if (target == NULL)
+    return NULL;
+
+  return dynamic_cast<bsd_kvm_target *> (target);
+}
+
 #ifndef HAVE_STRUCT_THREAD_TD_PCB
 
 static void
@@ -323,7 +340,8 @@ bsd_kvm_proc_cmd (const char *arg, int fromtty)
   if (arg == NULL)
     error_no_arg (_("proc address"));
 
-  if (core_kd == NULL)
+  bsd_kvm_target *target = current_bsd_kvm_target ();
+  if (target == NULL)
     error (_("No kernel memory image."));
 
   addr = parse_and_eval_address (arg);
@@ -333,8 +351,14 @@ bsd_kvm_proc_cmd (const char *arg, int fromtty)
   addr += offsetof (struct proc, p_addr);
 #endif
 
-  if (kvm_read (core_kd, addr, &bsd_kvm_paddr, sizeof bsd_kvm_paddr) == -1)
-    error (("%s"), kvm_geterr (core_kd));
+  gdbarch *gdbarch = current_gdbarch ();
+  gdb_byte ptr[gdbarch_ptr_bit (gdbarch) / TARGET_CHAR_BIT];
+  if (target_read_memory (addr, ptr, sizeof ptr) != 0)
+    error (_("Failed to read PCB address"));
+  addr = gdbarch_pointer_to_address (gdbarch,
+				     builtin_type (gdbarch)->builtin_data_ptr,
+				     buf);
+  target->set_pcb_addr (addr);
 
   target_fetch_registers (get_current_regcache (), -1);
 
@@ -351,10 +375,11 @@ bsd_kvm_pcb_cmd (const char *arg, int fromtty)
     /* i18n: PCB == "Process Control Block".  */
     error_no_arg (_("pcb address"));
 
-  if (core_kd == NULL)
+  bsd_kvm_target *target = current_bsd_kvm_target ();
+  if (target == NULL)
     error (_("No kernel memory image."));
 
-  bsd_kvm_paddr = (struct pcb *)(u_long) parse_and_eval_address (arg);
+  target->set_pcb_addr (parse_and_eval_address (arg));
 
   target_fetch_registers (get_current_regcache (), -1);
 
